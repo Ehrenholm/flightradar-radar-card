@@ -5,6 +5,8 @@ flights from the [AlexandrErohin/home-assistant-flightradar24](https://github.co
 integration — phosphor sweep, blip decay, dark map underlay, and an ATC-style
 contacts board.
 
+![Flightradar Radar Card](assets/screenshot.png)
+
 ## Features
 
 - Round CRT-style scope: rotating sweep beam, phosphor blip decay (pings fire
