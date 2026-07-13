@@ -1,5 +1,9 @@
 # Flightradar Radar Card
 
+[![Release](https://img.shields.io/github/v/release/Ehrenholm/flightradar-radar-card)](https://github.com/Ehrenholm/flightradar-radar-card/releases/latest)
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz/docs/faq/custom_repositories)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-support%20me-ff5f5f?logo=ko-fi&logoColor=white)](https://ko-fi.com/ehrenholm)
+
 A round, retro radar-scope Lovelace card for Home Assistant that displays live
 flights from the [AlexandrErohin/home-assistant-flightradar24](https://github.com/AlexandrErohin/home-assistant-flightradar24)
 integration — phosphor sweep, blip decay, dark map underlay, and an ATC-style
@@ -7,11 +11,24 @@ contacts board.
 
 ![Flightradar Radar Card](assets/screenshot.png)
 
+## Table of contents
+
+- [Features](#features)
+- [Preparation](#preparation)
+- [Installation](#installation)
+- [Add the card](#add-the-card)
+- [Options](#options)
+- [Examples](#examples)
+- [FAQ](#faq)
+- [Support](#support)
+- [Contribute](#contribute)
+- [Credits](#credits)
+
 ## Features
 
 - Round CRT-style scope: rotating sweep beam, phosphor blip decay (pings fire
   exactly when the beam passes), scanlines, vignette, bezel with compass and
-  range rings
+  labelled range rings
 - Dark Leaflet basemap (CARTO tiles), tinted to match the theme
 - Live aircraft blips with heading, callsign, and trails (line or
   phosphor-dot style); smooth dead-reckoned motion between sensor updates
@@ -27,9 +44,21 @@ contacts board.
 - Themes: `green`, `amber`, `blue`
 - Sizes itself to the dashboard column **and** the screen height (wall-tablet
   friendly, works in old Android WebViews); proximity alert, startup
-  animation, ring labels, and more — all configurable
+  animation, and more — all configurable
 - Visual config editor with every option; running version shown in the map
   attribution corner
+
+## Preparation
+
+The card reads the `flights` attribute of a sensor created by the
+[FlightRadar24 integration](https://github.com/AlexandrErohin/home-assistant-flightradar24)
+(install it via HACS first). Note down two things from that integration's
+configuration:
+
+- the **radius** — set the card's `radius_km` to the same value (it is not
+  exposed on the sensor, so the card can't read it automatically)
+- the **min/max altitude** filters — these decide which aircraft ever reach
+  the card (helicopters fly low: keep min altitude at 0 to see them)
 
 ## Installation
 
@@ -61,9 +90,10 @@ Updates then appear in HACS like any other card, with correct cache-busting
    Troubleshooting → *Reset frontend cache* after updating if the version
    in the corner looks stale.
 
-### Add the card
+## Add the card
 
-It appears in the card picker as "Flightradar Radar Card", or via YAML:
+It appears in the card picker as "Flightradar Radar Card" with a full visual
+editor, or via YAML:
 
 ```yaml
 type: custom:flightradar-radar-card
@@ -97,11 +127,90 @@ radius_km: 10          # match the radius configured in the FR24 integration
 | `alert_distance_km` | `0` | Pulse blips closer than this (0 = off) |
 | `debug` | `false` | On-screen viewport/size diagnostics |
 
-## Notes
+## Examples
 
-- The FR24 integration only filters by its configured radius (bounding box)
-  and min/max altitude — if an aircraft you see on flightradar24.com is
-  missing here, check those integration options first (Developer tools →
-  States → the sensor's `flights` attribute shows exactly what the card
-  receives).
-- Wall displays: use a Panel view, and in kiosk mode set `height_offset: 40`.
+Minimal:
+
+```yaml
+type: custom:flightradar-radar-card
+entity: sensor.flightradar24_current_in_area
+radius_km: 10
+```
+
+Wall display (landscape panel view, kiosk mode, helicopter watching):
+
+```yaml
+type: custom:flightradar-radar-card
+entity: sensor.flightradar24_current_in_area
+radius_km: 10
+contacts_position: left
+map_brightness: 0.85
+trail_style: dots
+trail_length: 60          # ≈10 min of history at a 10 s scan interval
+alert_distance_km: 3
+height_offset: 40         # no HA header in kiosk mode
+```
+
+Amber CRT look:
+
+```yaml
+type: custom:flightradar-radar-card
+entity: sensor.flightradar24_current_in_area
+radius_km: 40
+theme: amber
+sweep_period: 6
+```
+
+## FAQ
+
+**A flight I can see on flightradar24.com doesn't show up.**
+The card can only draw what the integration delivers. Check Developer tools →
+States → your sensor's `flights` attribute. If the aircraft isn't there, it
+was filtered by the integration's radius or min/max altitude options — or it
+is one of the aircraft blocked from FR24's public data feed. Remember the
+FR24 website shows a much larger area than your configured radius.
+
+**A helicopter/aircraft shows without a callsign.**
+Privacy-blocked aircraft carry no identity in the FR24 feed. The card labels
+them by type (e.g. `H145`) like the FR24 site does, and keeps a stable
+anonymous track for them.
+
+**The card looks outdated after an update.**
+Compare the version in the map's bottom-right corner with the release you
+installed. With manual installs, bump the `?v=` number on the resource URL;
+on the companion app also use *Reset frontend cache*. HACS installs handle
+this automatically.
+
+**The scope is cut off at the bottom on my wall tablet.**
+`fit_height` (on by default) caps the scope to the screen height minus
+`height_offset`. If there's still clipping or a large gap, tune
+`height_offset` — and set `debug: true` to see the measured sizes on screen.
+
+**How long is the trail?**
+`trail_length` × the integration's scan interval. One position is recorded
+per sensor update, starting when the aircraft enters your tracked area.
+
+**Blips jump between positions.**
+That's the sensor's update rhythm. Leave `smooth_motion: true` (default) to
+glide blips along their track between updates.
+
+## Support
+
+If you enjoy the card, you can support development on
+[Ko-fi](https://ko-fi.com/ehrenholm) ☕
+
+## Contribute
+
+Issues and pull requests are welcome — especially additional helicopter type
+codes for the glyph detection, theme ideas, and FAQ additions.
+
+## Credits
+
+- [AlexandrErohin/home-assistant-flightradar24](https://github.com/AlexandrErohin/home-assistant-flightradar24)
+  — the integration providing the flight data
+- [Leaflet](https://leafletjs.com/) — map rendering
+- [CARTO](https://carto.com/) dark basemap tiles ·
+  [OpenStreetMap](https://www.openstreetmap.org/) contributors — map data
+- [JetBrains Mono](https://www.jetbrains.com/lp/mono/) — the scope typeface
+- [fratsloos/fr24_card](https://github.com/fratsloos/fr24_card) — a great
+  table-style FR24 card that inspired parts of this README
