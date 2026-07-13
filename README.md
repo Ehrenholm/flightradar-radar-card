@@ -213,4 +213,4 @@ codes for the glyph detection, theme ideas, and FAQ additions.
   [OpenStreetMap](https://www.openstreetmap.org/) contributors — map data
 - [JetBrains Mono](https://www.jetbrains.com/lp/mono/) — the scope typeface
 - [fratsloos/fr24_card](https://github.com/fratsloos/fr24_card) — a great
-  table-style FR24 card that inspired parts of this README
+  table-style FR24 card that inspired
