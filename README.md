@@ -31,13 +31,37 @@ contacts board.
 
 ## Installation
 
-1. Copy `flightradar-radar-card.js` to your Home Assistant `config/www/` folder.
+### HACS (recommended)
+
+Until the card is in the HACS default store, add it as a custom repository:
+
+1. HACS → ⋮ (top right) → **Custom repositories**
+2. Repository: `https://github.com/Ehrenholm/flightradar-radar-card`,
+   type: **Dashboard** → Add
+3. Search for **Flightradar Radar Card** in HACS and install it
+4. HACS registers the dashboard resource automatically — just reload your
+   browser when prompted
+
+Updates then appear in HACS like any other card, with correct cache-busting
+(no manual version juggling).
+
+### Manual
+
+1. Download `flightradar-radar-card.js` from the
+   [latest release](https://github.com/Ehrenholm/flightradar-radar-card/releases/latest)
+   and copy it to your Home Assistant `config/www/` folder.
 2. Settings → Dashboards → ⋮ → Resources → Add resource:
-   - URL: `/local/flightradar-radar-card.js?v=1` (bump the `?v=` number on
-     every update to defeat caches — check the version in the map's
-     bottom-right corner)
-   - Type: JavaScript module
-3. Add the card (it appears in the card picker as "Flightradar Radar Card"):
+   - URL: `/local/flightradar-radar-card.js?v=1` — bump the `?v=` number on
+     every update to defeat caches (the running version is shown in the
+     map's bottom-right corner)
+   - Type: **JavaScript module**
+3. On tablets running the companion app, use Settings → Companion app →
+   Troubleshooting → *Reset frontend cache* after updating if the version
+   in the corner looks stale.
+
+### Add the card
+
+It appears in the card picker as "Flightradar Radar Card", or via YAML:
 
 ```yaml
 type: custom:flightradar-radar-card
@@ -79,8 +103,3 @@ radius_km: 10          # match the radius configured in the FR24 integration
   States → the sensor's `flights` attribute shows exactly what the card
   receives).
 - Wall displays: use a Panel view, and in kiosk mode set `height_offset: 40`.
-
-## Development
-
-`flightradar-radar-scope-prototype.html` is the original static prototype the
-card was built from (mock data, no Home Assistant required).
