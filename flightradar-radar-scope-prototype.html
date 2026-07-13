@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Flightradar Radar Scope — Prototype</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --green: #4dff9e;
+    --green-dim: #1f7a4c;
+    --amber: #ffb545;
+    --void: #04070a;
+    --sweep-period: 4000ms;
+  }
+  *{ box-sizing:border-box; }
+  html,body{
+    margin:0; padding:0; height:100%;
+    background: var(--void);
+    color:#bdf5d6;
+    font-family: var(--mono);
+  }
+  .stage{
+    min-height:100vh;
+    display:flex; align-items:center; justify-content:center;
+    background: radial-gradient(ellipse at center, #0a0f0d 0%, #04070a 65%);
+    padding: 32px 16px;
+  }
+  .console{
+    display:flex; gap:24px; align-items:flex-start; justify-content:center;
+    flex-wrap:wrap; max-width: 980px;
+  }
+  .radar-col{ display:flex; flex-direction:column; align-items:center; gap:10px; }
+  .readout{
+    display:flex; justify-content:space-between; gap:18px;
+    width:min(640px,86vw); font-size:11px; letter-spacing:.08em;
+    color:#7fe9ab; text-transform:uppercase;
+  }
+  .readout span b{ color: var(--green); font-weight:600; }
+
+  .radar-frame{
+    position:relative;
+    width:min(640px,86vw); aspect-ratio:1/1;
+    border-radius:50%;
+    background:#000;
+    box-shadow:
+      0 0 0 2px #0d1512,
+      0 0 0 12px #101d18,
+      0 0 0 14px #060a08,
+      inset 0 0 50px rgba(0,0,0,.7),
+      0 24px 60px rgba(0,0,0,.65);
+    overflow:hidden;
+  }
+  #map{
+    position:absolute; inset:0; width:100%; height:100%;
+    filter: grayscale(.35) brightness(.55) sepia(.3) hue-rotate(65deg) saturate(2.6) contrast(1.1);
+    background:#000;
+  }
+  .leaflet-control-attribution{
+    background: rgba(0,0,0,.5) !important;
+    color:#5c8f76 !important;
+    font-size:8px !important;
+  }
+  .leaflet-control-attribution a{ color:#7fe9ab !important; }
+
+  .radar-tint{
+    position:absolute; inset:0; border-radius:50%; pointer-events:none;
+    background: radial-gradient(circle, rgba(20,255,140,.06), rgba(0,0,0,.4) 100%);
+    mix-blend-mode: overlay;
+  }
+  .sweep{
+    position:absolute; inset:0; border-radius:50%; pointer-events:none;
+    background: conic-gradient(from 0deg, rgba(77,255,158,.6), rgba(77,255,158,0) 38deg, transparent 360deg);
+    mix-blend-mode: screen;
+    animation: spin var(--sweep-period) linear infinite;
+  }
+  @keyframes spin{ to{ transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce){
+    .sweep{ animation-duration: 20s; }
+  }
+  .bezel{ position:absolute; inset:0; pointer-events:none; }
+  .scanlines{
+    position:absolute; inset:0; border-radius:50%; pointer-events:none;
+    background: repeating-linear-gradient(to bottom, rgba(0,0,0,.16) 0px, rgba(0,0,0,.16) 1px, transparent 2px, transparent 3px);
+    mix-blend-mode:multiply; opacity:.55;
+  }
+  .vignette{
+    position:absolute; inset:0; border-radius:50%; pointer-events:none;
+    background: radial-gradient(circle, transparent 52%, rgba(0,0,0,.6) 100%);
+  }
+
+  .blip-shape{
+    width:0; height:0;
+    border-left:5px solid transparent;
+    border-right:5px solid transparent;
+    border-bottom:12px solid var(--green);
+    transform-origin: 50% 60%;
+    transition: border-bottom-color .2s linear;
+  }
+  .blip-label{
+    position:absolute; top:12px; left:8px; white-space:nowrap;
+    font-size:9px; letter-spacing:.03em; color:var(--green);
+    text-shadow: 0 0 4px rgba(0,0,0,.9);
+  }
+
+  .panel{
+    width:300px; max-width:86vw;
+    background: linear-gradient(180deg, rgba(10,20,16,.92), rgba(6,12,10,.92));
+    border:1px solid rgba(77,255,158,.25);
+    border-radius:10px;
+    padding:14px 14px 8px;
+  }
+  .panel h2{
+    font-size:11px; letter-spacing:.16em; text-transform:uppercase;
+    color:var(--green); margin:0 0 10px; font-weight:600;
+  }
+  .panel h2 small{ color:#5c8f76; text-transform:none; letter-spacing:0; display:block; margin-top:2px; font-size:10px;}
+  .contact-list{ list-style:none; margin:0; padding:0; max-height:420px; overflow:auto; }
+  .contact-row{
+    all:unset;
+    display:grid; grid-template-columns: 1fr 46px 44px 46px;
+    gap:4px; width:100%;
+    padding:7px 6px; border-radius:6px; cursor:pointer;
+    font-family:var(--mono); font-size:11px; color:#bdf5d6;
+  }
+  .contact-row:hover, .contact-row:focus-visible{
+    background: rgba(77,255,158,.12);
+    box-shadow: 0 0 0 1px rgba(77,255,158,.4) inset;
+    outline:none;
+  }
+  .contact-row.selected{
+    background: rgba(255,181,69,.14);
+    color: var(--amber);
+    box-shadow: 0 0 0 1px rgba(255,181,69,.4) inset;
+  }
+  .contact-row .cs{ font-weight:600; }
+  .contact-head{
+    display:grid; grid-template-columns: 1fr 46px 44px 46px; gap:4px;
+    padding:0 6px 6px; font-size:9px; letter-spacing:.08em; color:#5c8f76; text-transform:uppercase;
+  }
+  .note{
+    font-size:10px; color:#5c8f76; line-height:1.5; padding-top:10px;
+    border-top:1px dashed rgba(77,255,158,.2); margin-top:8px;
+  }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <div class="console">
+    <div class="radar-col">
+      <div class="readout">
+        <span>SITE <b>DEMO-HOME</b></span>
+        <span>RANGE <b id="rangeReadout">—</b></span>
+        <span id="clock">--:--:--</span>
+      </div>
+      <div class="radar-frame" id="frame">
+        <div id="map"></div>
+        <div class="radar-tint"></div>
+        <div class="sweep"></div>
+        <svg class="bezel" id="bezel" viewBox="0 0 100 100"></svg>
+        <div class="scanlines"></div>
+        <div class="vignette"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Contacts <small id="contactCount">0 tracked</small></h2>
+      <div class="contact-head">
+        <span>Flight</span><span>Alt</span><span>Spd</span><span>Rng</span>
+      </div>
+      <ul class="contact-list" id="contactList"></ul>
+      <p class="note">
+        Mock data — a stand-in for <code>sensor.flightradar24_current_in_area</code>.
+        Swap <code>fleet</code> for the real <code>flights</code> attribute
+        (latitude / longitude / heading / ground_speed / altitude / callsign)
+        to wire this into Home Assistant.
+      </p>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ---- Config (mirrors what a real card would read from card config / hass.config) ----
+  const HOME = { lat: 59.3293, lon: 18.0686 }; // swap for your FR24 integration's configured lat/lon
+  const RADIUS_KM = 40;                         // swap for the integration's configured radius
+  const SWEEP_PERIOD_MS = 4000;                 // must match the CSS --sweep-period value above
+  const DECAY_MS = SWEEP_PERIOD_MS;             // how long a blip stays bright after the sweep passes
+  const KM_PER_DEG_LAT = 111.32;
+
+  document.getElementById('rangeReadout').textContent = RADIUS_KM + ' KM';
+
+  // ---- Map setup ----
+  const map = L.map('map', {
+    zoomControl:false, attributionControl:true, dragging:false,
+    scrollWheelZoom:false, doubleClickZoom:false, boxZoom:false,
+    keyboard:false, touchZoom:false, tap:false
+  });
+
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    subdomains:'abcd', maxZoom:19,
+    attribution:'&copy; OpenStreetMap &copy; CARTO'
+  }).addTo(map);
+
+  const homeLatLng = L.latLng(HOME.lat, HOME.lon);
+  const boundary = L.circle(homeLatLng, {
+    radius: RADIUS_KM*1000, color:'#4dff9e', weight:1, opacity:.35, fill:false, dashArray:'2 6'
+  }).addTo(map);
+  map.fitBounds(boundary.getBounds(), { animate:false });
+
+  L.circleMarker(homeLatLng, {
+    radius:4, color:'#4dff9e', weight:1, fillColor:'#4dff9e', fillOpacity:1
+  }).addTo(map);
+
+  // ---- Bezel overlay (range rings, ticks, compass) ----
+  const bezel = document.getElementById('bezel');
+  const svgns = 'http://www.w3.org/2000/svg';
+  const C = 50, R = 48;
+  function svgEl(tag, attrs){
+    const el = document.createElementNS(svgns, tag);
+    for (const k in attrs) el.setAttribute(k, attrs[k]);
+    return el;
+  }
+  [0.25, 0.5, 0.75, 1].forEach(f=>{
+    bezel.appendChild(svgEl('circle', {
+      cx:C, cy:C, r:R*f, fill:'none', stroke:'rgba(77,255,158,.22)', 'stroke-width':0.3
+    }));
+  });
+  for (let deg=0; deg<360; deg+=10){
+    const major = deg % 30 === 0;
+    const rad = (deg-90) * Math.PI/180;
+    const rOuter = R;
+    const rInner = R - (major ? 4 : 2);
+    const x1 = C + rOuter*Math.cos(rad), y1 = C + rOuter*Math.sin(rad);
+    const x2 = C + rInner*Math.cos(rad), y2 = C + rInner*Math.sin(rad);
+    bezel.appendChild(svgEl('line', {
+      x1, y1, x2, y2, stroke:'rgba(77,255,158,.4)', 'stroke-width': major ? 0.5 : 0.25
+    }));
+  }
+  [['N',0],['E',90],['S',180],['W',270]].forEach(([label,deg])=>{
+    const rad = (deg-90)*Math.PI/180;
+    const x = C + (R-9)*Math.cos(rad), y = C + (R-9)*Math.sin(rad);
+    const t = svgEl('text', {
+      x, y, fill:'#7fe9ab', 'font-size':4, 'font-family':'var(--mono)',
+      'text-anchor':'middle', 'dominant-baseline':'middle'
+    });
+    t.textContent = label;
+    bezel.appendChild(t);
+  });
+
+  // ---- Mock fleet ----
+  const AIRLINES = ['SAS','NAX','THY','BAW','DLH','KLM','RYR','WZZ'];
+  function randCallsign(){
+    const al = AIRLINES[Math.floor(Math.random()*AIRLINES.length)];
+    return al + (100 + Math.floor(Math.random()*899));
+  }
+  function toRad(d){ return d*Math.PI/180; }
+
+  function spawn(id){
+    const entryBearing = Math.random()*360;
+    const heading = (entryBearing + 180 + (Math.random()*50-25) + 360) % 360;
+    const rad = toRad(entryBearing);
+    return {
+      id,
+      callsign: randCallsign(),
+      alt: 3000 + Math.floor(Math.random()*35000),
+      speedKts: 240 + Math.floor(Math.random()*260),
+      heading,
+      x: RADIUS_KM * Math.sin(rad),
+      y: RADIUS_KM * Math.cos(rad),
+      trail: [],
+      lastSweep: 0,
+      marker: null,
+      poly: null
+    };
+  }
+
+  const FLEET_SIZE = 6;
+  const fleet = [];
+  for (let i=0;i<FLEET_SIZE;i++) fleet.push(spawn(i));
+
+  function kmToLatLon(x, y){
+    const dLat = y / KM_PER_DEG_LAT;
+    const dLon = x / (KM_PER_DEG_LAT * Math.cos(toRad(HOME.lat)));
+    return [HOME.lat + dLat, HOME.lon + dLon];
+  }
+
+  function makeIcon(){
+    return L.divIcon({
+      className:'blip-icon',
+      html:'<div class="blip-shape"></div><div class="blip-label"></div>',
+      iconSize:[14,14], iconAnchor:[7,7]
+    });
+  }
+
+  fleet.forEach(ac=>{
+    const [lat,lon] = kmToLatLon(ac.x, ac.y);
+    ac.marker = L.marker([lat,lon], { icon: makeIcon(), interactive:false }).addTo(map);
+    ac.poly = L.polyline([[lat,lon]], { color:'#4dff9e', weight:1.4, opacity:.3 }).addTo(map);
+  });
+
+  // ---- Contact list ----
+  const listEl = document.getElementById('contactList');
+  const countEl = document.getElementById('contactCount');
+  let selectedId = null;
+
+  function renderContacts(){
+    const sorted = [...fleet].sort((a,b)=> Math.hypot(a.x,a.y) - Math.hypot(b.x,b.y));
+    listEl.innerHTML = '';
+    sorted.forEach(ac=>{
+      const dist = Math.hypot(ac.x, ac.y);
+      const li = document.createElement('li');
+      const btn = document.createElement('button');
+      btn.className = 'contact-row' + (ac.id === selectedId ? ' selected' : '');
+      btn.innerHTML =
+        `<span class="cs">${ac.callsign}</span>` +
+        `<span>${(ac.alt/1000).toFixed(1)}k</span>` +
+        `<span>${ac.speedKts}</span>` +
+        `<span>${dist.toFixed(0)}km</span>`;
+      btn.addEventListener('click', ()=>{ selectedId = (selectedId === ac.id) ? null : ac.id; renderContacts(); });
+      li.appendChild(btn);
+      listEl.appendChild(li);
+    });
+    countEl.textContent = fleet.length + ' tracked';
+  }
+  renderContacts();
+
+  // ---- Simulation tick (position/physics) ----
+  const TICK_MS = 200;
+  setInterval(()=>{
+    const dt = TICK_MS/1000;
+    fleet.forEach(ac=>{
+      const spdKmS = ac.speedKts * 1.852/3600;
+      const rad = toRad(ac.heading);
+      ac.x += spdKmS*dt*Math.sin(rad);
+      ac.y += spdKmS*dt*Math.cos(rad);
+      const dist = Math.hypot(ac.x, ac.y);
+      if (dist > RADIUS_KM*1.05){
+        Object.assign(ac, spawn(ac.id));
+      }
+      const [lat,lon] = kmToLatLon(ac.x, ac.y);
+      ac.trail.push([lat,lon]);
+      if (ac.trail.length > 7) ac.trail.shift();
+      ac.marker.setLatLng([lat,lon]);
+      ac.poly.setLatLngs(ac.trail);
+      const el = ac.marker.getElement();
+      if (el){
+        const shape = el.querySelector('.blip-shape');
+        const label = el.querySelector('.blip-label');
+        if (shape) shape.style.transform = `rotate(${ac.heading}deg)`;
+        if (label) label.textContent = ac.callsign;
+      }
+    });
+    renderContacts();
+  }, TICK_MS);
+
+  // ---- Sweep-driven brightness decay (the "phosphor" effect) ----
+  function bearingOf(ac){ return (Math.atan2(ac.x, ac.y)*180/Math.PI + 360) % 360; }
+  let lastAngle = 0;
+  function frame(now){
+    const angle = (now % SWEEP_PERIOD_MS) / SWEEP_PERIOD_MS * 360;
+    fleet.forEach(ac=>{
+      const b = bearingOf(ac);
+      const crossed = lastAngle < angle
+        ? (b >= lastAngle && b < angle)
+        : (b >= lastAngle || b < angle); // wrapped past 360
+      if (crossed) ac.lastSweep = now;
+
+      const age = now - ac.lastSweep;
+      const brightness = Math.max(0.18, 1 - age/DECAY_MS);
+      const isSelected = ac.id === selectedId;
+      const el = ac.marker.getElement();
+      if (el){
+        const shape = el.querySelector('.blip-shape');
+        const label = el.querySelector('.blip-label');
+        const color = isSelected ? '#ffb545' : '#4dff9e';
+        if (shape){
+          shape.style.borderBottomColor = color;
+          shape.style.opacity = isSelected ? 1 : brightness;
+          shape.style.filter = `drop-shadow(0 0 ${2 + brightness*4}px ${color})`;
+        }
+        if (label) label.style.opacity = isSelected ? 1 : Math.max(0.25, brightness);
+      }
+      ac.poly.setStyle({ opacity: (isSelected ? 0.6 : 0.25) });
+    });
+    lastAngle = angle;
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // ---- Clock ----
+  const clockEl = document.getElementById('clock');
+  setInterval(()=>{
+    clockEl.textContent = new Date().toISOString().substring(11,19) + ' UTC';
+  }, 1000);
+
+})();
+</script>
+</body>
+</html>
