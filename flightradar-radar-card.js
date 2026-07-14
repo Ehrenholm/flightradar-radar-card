@@ -1,5 +1,5 @@
 /**
- * flightradar-radar-card v0.9.0
+ * flightradar-radar-card v0.10.0
  *
  * A round "radar scope" Lovelace card for the AlexandrErohin/home-assistant-flightradar24
  * integration. Renders the entity's `flights` attribute as sweep-lit blips on a dark map.
@@ -35,6 +35,8 @@
  *   sound_alerts: none       # optional: none | new_contact | proximity | all —
  *                            # synthesized pings; shows a tap-to-arm speaker toggle
  *                            # on the scope (hidden when none)
+ *   speed_unit: kts          # optional: kts | kmh
+ *   altitude_unit: ft        # optional: ft | m
  *   debug: false             # optional, show viewport/size diagnostics in the readout
  *
  * Emergency squawks (7700/7600/7500) always paint red, pulse, and sort first.
@@ -47,7 +49,7 @@ const LEAFLET_JS = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.js
 const LEAFLET_CSS = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.css`;
 const FONT_CSS = 'https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap';
 
-const CARD_VERSION = '0.9.0';
+const CARD_VERSION = '0.10.0';
 
 const DEFAULT_SWEEP_PERIOD_S = 4;
 const DEFAULT_MAP_BRIGHTNESS = 0.55;
@@ -58,6 +60,8 @@ const DEFAULT_HEIGHT_OFFSET = 150;
 const CONTACTS_POSITIONS = ['right', 'left', 'bottom', 'none'];
 const TRAIL_STYLES = ['line', 'dots'];
 const SOUND_MODES = ['none', 'new_contact', 'proximity', 'all'];
+const SPEED_UNITS = ['kts', 'kmh'];
+const ALTITUDE_UNITS = ['ft', 'm'];
 const SOUND_STORAGE_KEY = 'flightradar-radar-card-sound-armed';
 
 const SPEAKER_ON_SVG = '<svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3z"/>'
@@ -208,7 +212,7 @@ const CARD_CSS = `
   .bezel{ position:absolute; inset:0; pointer-events:none; }
   .bz-ring{ fill:none; stroke:rgba(var(--accent-rgb),.22); }
   .bz-tick{ stroke:rgba(var(--accent-rgb),.4); }
-  .bz-txt{ fill:var(--soft); }
+  .bz-txt{ fill:var(--soft); opacity:.55; }
   .bz-lbl{ fill:var(--muted); }
   .scanlines{
     position:absolute; inset:0; border-radius:50%; pointer-events:none;
@@ -346,6 +350,8 @@ const EDITOR_SCHEMA = [
   { name: 'alert_distance_km', selector: { number: { min: 0, max: 200, step: 1, mode: 'box' } } },
   { name: 'linger_time', selector: { number: { min: 0, max: 300, step: 5, mode: 'box' } } },
   { name: 'sound_alerts', selector: { select: { mode: 'dropdown', options: SOUND_MODES.map((v) => ({ value: v, label: v })) } } },
+  { name: 'speed_unit', selector: { select: { mode: 'dropdown', options: SPEED_UNITS.map((v) => ({ value: v, label: v })) } } },
+  { name: 'altitude_unit', selector: { select: { mode: 'dropdown', options: ALTITUDE_UNITS.map((v) => ({ value: v, label: v })) } } },
   { name: 'debug', selector: { boolean: {} } },
   { name: 'map_brightness', selector: { number: { min: 0.1, max: 1.5, step: 0.05, mode: 'slider' } } },
   { name: 'sweep_period', selector: { number: { min: 1, max: 20, step: 0.5, mode: 'slider' } } },
@@ -372,6 +378,8 @@ const EDITOR_LABELS = {
   alert_distance_km: 'Proximity alert distance (km, 0 = off)',
   linger_time: 'Keep lost contacts for (seconds, 0 = remove instantly)',
   sound_alerts: 'Sound alerts (synthesized pings)',
+  speed_unit: 'Speed unit (kts or kmh)',
+  altitude_unit: 'Altitude unit (ft or m)',
   debug: 'Show size diagnostics (troubleshooting)',
   map_brightness: 'Map brightness',
   sweep_period: 'Sweep period (seconds)',
@@ -403,6 +411,8 @@ const EDITOR_DEFAULTS = {
   alert_distance_km: 0,
   linger_time: 45,
   sound_alerts: 'none',
+  speed_unit: 'kts',
+  altitude_unit: 'ft',
 };
 
 class FlightradarRadarCardEditor extends HTMLElement {
@@ -514,6 +524,12 @@ class FlightradarRadarCard extends HTMLElement {
     if (config.sound_alerts != null && !SOUND_MODES.includes(config.sound_alerts)) {
       throw new Error(`flightradar-radar-card: "sound_alerts" must be one of ${SOUND_MODES.join(', ')}`);
     }
+    if (config.speed_unit != null && !SPEED_UNITS.includes(config.speed_unit)) {
+      throw new Error(`flightradar-radar-card: "speed_unit" must be one of ${SPEED_UNITS.join(', ')}`);
+    }
+    if (config.altitude_unit != null && !ALTITUDE_UNITS.includes(config.altitude_unit)) {
+      throw new Error(`flightradar-radar-card: "altitude_unit" must be one of ${ALTITUDE_UNITS.join(', ')}`);
+    }
     this._config = {
       ...config,
       radius_km: config.radius_km != null ? Number(config.radius_km) : DEFAULT_RADIUS_KM,
@@ -534,6 +550,8 @@ class FlightradarRadarCard extends HTMLElement {
       alert_distance_km: Number(config.alert_distance_km) > 0 ? Number(config.alert_distance_km) : 0,
       linger_time: Number(config.linger_time) >= 0 ? Number(config.linger_time) : 45,
       sound_alerts: config.sound_alerts || 'none',
+      speed_unit: config.speed_unit || 'kts',
+      altitude_unit: config.altitude_unit || 'ft',
       debug: config.debug === true,
     };
     this._sweepMs = this._config.sweep_period * 1000;
@@ -916,6 +934,10 @@ class FlightradarRadarCard extends HTMLElement {
       zoomControl: false, attributionControl: true, dragging: false,
       scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false,
       keyboard: false, touchZoom: false, tap: false,
+      // fractional zoom so fitBounds makes the scope rim EXACTLY radius_km —
+      // with integer zoom snapping the visible rim could be 1.5x the range,
+      // making the bezel ring labels lie about distances
+      zoomSnap: 0,
     });
 
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
@@ -1133,6 +1155,21 @@ class FlightradarRadarCard extends HTMLElement {
     this._initialSyncDone = true;
   }
 
+  // ---- Unit formatting (FR24 reports altitude in ft, ground speed in kts) ----
+
+  _fmtAlt(ft) {
+    if (this._config.altitude_unit === 'm') return `${Math.round(ft * 0.3048)}m`;
+    return `${(ft / 1000).toFixed(1)}k`;
+  }
+
+  _fmtSpd(kts) {
+    return String(Math.round(this._config.speed_unit === 'kmh' ? kts * 1.852 : kts));
+  }
+
+  _spdUnitLabel() {
+    return this._config.speed_unit === 'kmh' ? 'km/h' : 'kt';
+  }
+
   // ---- Contact list ----
 
   _renderContacts() {
@@ -1157,8 +1194,8 @@ class FlightradarRadarCard extends HTMLElement {
       main.className = 'contact-main';
       const cells = [
         ['cs', ac.callsign],
-        ['', `${(ac.alt / 1000).toFixed(1)}k${ac.trend || ''}`],
-        ['', `${Math.round(ac.speedKts)}`],
+        ['', `${this._fmtAlt(ac.alt)}${ac.trend || ''}`],
+        ['', this._fmtSpd(ac.speedKts)],
         ['', `${dist.toFixed(0)}km`],
       ];
       for (const [cls, text] of cells) {
@@ -1285,7 +1322,7 @@ class FlightradarRadarCard extends HTMLElement {
         }
         if (label) label.style.opacity = (fullBright ? 1 : Math.max(0.5, brightness)) * lostDim;
         if (isSelected) {
-          const tagText = `${(ac.alt / 1000).toFixed(1)}k${ac.trend} ${Math.round(ac.speedKts)}kt`;
+          const tagText = `${this._fmtAlt(ac.alt)}${ac.trend} ${this._fmtSpd(ac.speedKts)}${this._spdUnitLabel()}`;
           if (ac._tag !== tagText) {
             ac._tag = tagText;
             const t1 = el.querySelector('.blip-tag .t1');

@@ -129,6 +129,8 @@ radius_km: 10          # match the radius configured in the FR24 integration
 | `startup_animation` | `true` | Scope warm-up fade on load |
 | `alert_distance_km` | `0` | Pulse blips closer than this (0 = off) |
 | `sound_alerts` | `none` | `none` \| `new_contact` \| `proximity` \| `all` — synthesized pings; the speaker toggle on the scope is hidden when `none` |
+| `speed_unit` | `kts` | `kts` \| `kmh` |
+| `altitude_unit` | `ft` | `ft` \| `m` |
 | `debug` | `false` | On-screen viewport/size diagnostics |
 
 ## Examples
