@@ -1,5 +1,5 @@
 /**
- * flightradar-radar-card v0.10.2
+ * flightradar-radar-card v1.0.0
  *
  * A round "radar scope" Lovelace card for the AlexandrErohin/home-assistant-flightradar24
  * integration. Renders the entity's `flights` attribute as sweep-lit blips on a dark map.
@@ -49,7 +49,7 @@ const LEAFLET_JS = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.js
 const LEAFLET_CSS = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.css`;
 const FONT_CSS = 'https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap';
 
-const CARD_VERSION = '0.10.2';
+const CARD_VERSION = '1.0.0';
 
 const DEFAULT_SWEEP_PERIOD_S = 4;
 const DEFAULT_MAP_BRIGHTNESS = 0.55;
