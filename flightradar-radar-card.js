@@ -1,5 +1,5 @@
 /**
- * flightradar-radar-card v0.10.1
+ * flightradar-radar-card v0.10.2
  *
  * A round "radar scope" Lovelace card for the AlexandrErohin/home-assistant-flightradar24
  * integration. Renders the entity's `flights` attribute as sweep-lit blips on a dark map.
@@ -49,7 +49,7 @@ const LEAFLET_JS = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.js
 const LEAFLET_CSS = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.css`;
 const FONT_CSS = 'https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap';
 
-const CARD_VERSION = '0.10.1';
+const CARD_VERSION = '0.10.2';
 
 const DEFAULT_SWEEP_PERIOD_S = 4;
 const DEFAULT_MAP_BRIGHTNESS = 0.55;
@@ -76,6 +76,12 @@ const THEMES = {
   amber: { accentRgb: '255,181,69', selectedRgb: '77,255,158', text: '#f5e6c8', muted: '#8f7c5c', soft: '#e9cb7f', mapHue: '350deg' },
   blue: { accentRgb: '77,181,255', selectedRgb: '255,181,69', text: '#c8ddf5', muted: '#5c7a8f', soft: '#7fc0e9', mapHue: '185deg' },
 };
+
+// The FR24 integration reports missing values as the literal string 'N/A',
+// and privacy-blocked identities as 'BLOCKED' — treat both as empty.
+function field(v) {
+  return v && v !== 'N/A' && v !== 'BLOCKED' ? String(v) : '';
+}
 
 const HELI_CODE_RE = /^(EC\d|H1\d\d|B06|B407|B412|B429|B505|R22|R44|R66|S61|S64|S76|S92|UH1|A109|A119|A129|A139|A149|A169|A189|AS3\d|AS5\d|MI\d|KA\d)/;
 const HELI_MODEL_RE = /helicopter|eurocopter|sikorsky|robinson r|bell \d|agusta|kamov|airbus h\d|leonardo aw/i;
@@ -1028,11 +1034,9 @@ class FlightradarRadarCard extends HTMLElement {
       const lat = Number(f.latitude);
       const lon = Number(f.longitude);
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
-      // FR24 reports privacy-blocked aircraft with the literal string 'BLOCKED'
-      const reg = f.aircraft_registration && f.aircraft_registration !== 'BLOCKED' ? f.aircraft_registration : '';
-      // `||` not `??`: anonymized aircraft can report empty strings for these
-      let id = f.aircraft_icao_24bit || f.callsign || reg || f.flight_number || '';
-      if (!id || id === 'BLOCKED') {
+      const reg = field(f.aircraft_registration);
+      let id = field(f.aircraft_icao_24bit) || field(f.callsign) || reg || field(f.flight_number);
+      if (!id) {
         // no usable identity: adopt the nearest existing anonymous track so the
         // blip and its trail persist across updates instead of respawning
         let best = null;
@@ -1078,22 +1082,21 @@ class FlightradarRadarCard extends HTMLElement {
       ac.heli = isHelicopter(f);
       // blocked/anonymous aircraft: label by type like the FR24 site does,
       // instead of showing the literal 'BLOCKED' placeholder
-      const cs = f.callsign && f.callsign !== 'BLOCKED' ? f.callsign : '';
-      ac.callsign = cs || f.flight_number || reg || f.aircraft_code
+      ac.callsign = field(f.callsign) || field(f.flight_number) || reg || field(f.aircraft_code)
         || (ac.heli ? 'HELI' : 'NO-ID');
       ac.alt = Number(f.altitude) || 0;
       ac.speedKts = Number(f.ground_speed) || 0;
       ac.heading = Number(f.heading ?? f.track) || 0;
-      ac.model = f.aircraft_model || f.aircraft_code || '';
+      ac.model = field(f.aircraft_model) || field(f.aircraft_code);
       ac.reg = reg;
-      ac.airline = f.airline_short || '';
-      ac.origin = f.airport_origin_code_iata || '';
-      ac.dest = f.airport_destination_code_iata || '';
-      ac.squawk = String(f.squawk || '');
+      ac.airline = field(f.airline_short);
+      ac.origin = field(f.airport_origin_code_iata);
+      ac.dest = field(f.airport_destination_code_iata);
+      ac.squawk = field(f.squawk);
       const wasEmergency = ac.emergency;
       ac.emergency = EMERGENCY_SQUAWKS.includes(ac.squawk);
       if (ac.emergency && !wasEmergency && this._initialSyncDone) this._playPing('emergency');
-      ac.photo = f.aircraft_photo_small || f.aircraft_photo_medium || '';
+      ac.photo = field(f.aircraft_photo_small) || field(f.aircraft_photo_medium);
       if (prevAlt != null) {
         const climb = ac.alt - prevAlt;
         ac.trend = Math.abs(climb) >= 100 ? (climb > 0 ? '▲' : '▼') : '';
