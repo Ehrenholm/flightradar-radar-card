@@ -1,5 +1,5 @@
 /**
- * flightradar-radar-card v0.10.0
+ * flightradar-radar-card v0.10.1
  *
  * A round "radar scope" Lovelace card for the AlexandrErohin/home-assistant-flightradar24
  * integration. Renders the entity's `flights` attribute as sweep-lit blips on a dark map.
@@ -49,7 +49,7 @@ const LEAFLET_JS = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.js
 const LEAFLET_CSS = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.css`;
 const FONT_CSS = 'https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap';
 
-const CARD_VERSION = '0.10.0';
+const CARD_VERSION = '0.10.1';
 
 const DEFAULT_SWEEP_PERIOD_S = 4;
 const DEFAULT_MAP_BRIGHTNESS = 0.55;
@@ -198,14 +198,14 @@ const CARD_CSS = `
     will-change: transform;
   }
   .sound-toggle{
-    position:absolute; right:13%; top:13%; z-index:5;
-    width:30px; height:30px; border-radius:50%;
+    width:24px; height:24px; border-radius:50%;
     display:flex; align-items:center; justify-content:center;
+    align-self:center; flex:0 0 auto;
     border:1px solid rgba(var(--accent-rgb),.35);
     background:rgba(0,0,0,.55); color:var(--muted); cursor:pointer;
     padding:0;
   }
-  .sound-toggle svg{ width:15px; height:15px; fill:currentColor; }
+  .sound-toggle svg{ width:13px; height:13px; fill:currentColor; }
   .sound-toggle:hover{ box-shadow:0 0 0 1px rgba(var(--accent-rgb),.5); }
   .sound-toggle.armed{ color:var(--green); border-color:rgba(var(--accent-rgb),.7); }
   .sound-toggle[hidden]{ display:none; }
@@ -796,6 +796,7 @@ class FlightradarRadarCard extends HTMLElement {
             <span>SITE <b id="siteReadout">—</b></span>
             <span>RANGE <b id="rangeReadout">—</b></span>
             <span id="clock">--:--:--</span>
+            <button class="sound-toggle" id="soundToggle" hidden></button>
           </div>
           <div class="readout" id="debugReadout" hidden></div>
           <div class="radar-frame" id="frame">
@@ -805,7 +806,6 @@ class FlightradarRadarCard extends HTMLElement {
             <svg class="bezel" id="bezel" viewBox="0 0 100 100"></svg>
             <div class="scanlines"></div>
             <div class="vignette"></div>
-            <button class="sound-toggle" id="soundToggle" hidden></button>
           </div>
         </div>
         <div class="panel">
