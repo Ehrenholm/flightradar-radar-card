@@ -1,5 +1,5 @@
 /**
- * flightradar-radar-card v1.0.0
+ * flightradar-radar-card v1.1.0
  *
  * A round "radar scope" Lovelace card for the AlexandrErohin/home-assistant-flightradar24
  * integration. Renders the entity's `flights` attribute as sweep-lit blips on a dark map.
@@ -35,6 +35,8 @@
  *   sound_alerts: none       # optional: none | new_contact | proximity | all —
  *                            # synthesized pings; shows a tap-to-arm speaker toggle
  *                            # on the scope (hidden when none)
+ *   stale_after: 120         # optional, show a red STALE warning in the readout when
+ *                            # the sensor hasn't updated for this many seconds (0 = off)
  *   speed_unit: kts          # optional: kts | kmh
  *   altitude_unit: ft        # optional: ft | m
  *   debug: false             # optional, show viewport/size diagnostics in the readout
@@ -49,7 +51,7 @@ const LEAFLET_JS = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.js
 const LEAFLET_CSS = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.css`;
 const FONT_CSS = 'https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap';
 
-const CARD_VERSION = '1.0.0';
+const CARD_VERSION = '1.1.0';
 
 const DEFAULT_SWEEP_PERIOD_S = 4;
 const DEFAULT_MAP_BRIGHTNESS = 0.55;
@@ -161,6 +163,14 @@ const CARD_CSS = `
     color:var(--soft); text-transform:uppercase;
   }
   .readout span b{ color: var(--green); font-weight:600; }
+  .readout #dataAge.stale{
+    color: var(--emergency);
+    animation: staleBlink 1.2s steps(2) infinite;
+  }
+  @keyframes staleBlink{ 50%{ opacity:.35; } }
+  @media (prefers-reduced-motion: reduce){
+    .readout #dataAge.stale{ animation: none; }
+  }
 
   .radar-frame{
     position:relative;
@@ -356,6 +366,7 @@ const EDITOR_SCHEMA = [
   { name: 'alert_distance_km', selector: { number: { min: 0, max: 200, step: 1, mode: 'box' } } },
   { name: 'linger_time', selector: { number: { min: 0, max: 300, step: 5, mode: 'box' } } },
   { name: 'sound_alerts', selector: { select: { mode: 'dropdown', options: SOUND_MODES.map((v) => ({ value: v, label: v })) } } },
+  { name: 'stale_after', selector: { number: { min: 0, max: 3600, step: 10, mode: 'box' } } },
   { name: 'speed_unit', selector: { select: { mode: 'dropdown', options: SPEED_UNITS.map((v) => ({ value: v, label: v })) } } },
   { name: 'altitude_unit', selector: { select: { mode: 'dropdown', options: ALTITUDE_UNITS.map((v) => ({ value: v, label: v })) } } },
   { name: 'debug', selector: { boolean: {} } },
@@ -384,6 +395,7 @@ const EDITOR_LABELS = {
   alert_distance_km: 'Proximity alert distance (km, 0 = off)',
   linger_time: 'Keep lost contacts for (seconds, 0 = remove instantly)',
   sound_alerts: 'Sound alerts (synthesized pings)',
+  stale_after: 'Warn when data is older than (seconds, 0 = off)',
   speed_unit: 'Speed unit (kts or kmh)',
   altitude_unit: 'Altitude unit (ft or m)',
   debug: 'Show size diagnostics (troubleshooting)',
@@ -417,6 +429,7 @@ const EDITOR_DEFAULTS = {
   alert_distance_km: 0,
   linger_time: 45,
   sound_alerts: 'none',
+  stale_after: 120,
   speed_unit: 'kts',
   altitude_unit: 'ft',
 };
@@ -556,6 +569,7 @@ class FlightradarRadarCard extends HTMLElement {
       alert_distance_km: Number(config.alert_distance_km) > 0 ? Number(config.alert_distance_km) : 0,
       linger_time: Number(config.linger_time) >= 0 ? Number(config.linger_time) : 45,
       sound_alerts: config.sound_alerts || 'none',
+      stale_after: Number(config.stale_after) >= 0 ? Number(config.stale_after) : 120,
       speed_unit: config.speed_unit || 'kts',
       altitude_unit: config.altitude_unit || 'ft',
       debug: config.debug === true,
@@ -701,6 +715,9 @@ class FlightradarRadarCard extends HTMLElement {
     this._clearWarning();
     if (stateObj === this._lastStateObj) return; // unchanged entity, skip re-render
     this._lastStateObj = stateObj;
+    // the integration stamps last_updated on every poll — if it stops moving,
+    // the feed is stale (frozen integration, API trouble) and we warn on screen
+    this._lastDataTs = Date.parse(stateObj.attributes.last_updated || stateObj.last_updated || '') || null;
 
     const flights = Array.isArray(stateObj.attributes.flights) ? stateObj.attributes.flights : [];
     if (this._map) {
@@ -745,6 +762,18 @@ class FlightradarRadarCard extends HTMLElement {
         // some Android WebViews deliver resize events unreliably — re-measure
         // on the clock tick so the height fit always converges
         this._updateFitHeight();
+        const ageEl = this.shadowRoot.getElementById('dataAge');
+        if (ageEl) {
+          const wrap = this.shadowRoot.getElementById('dataAgeWrap');
+          const enabled = this._config && this._config.stale_after > 0;
+          wrap.hidden = !enabled;
+          if (enabled && this._lastDataTs) {
+            const age = Math.max(0, Math.round((Date.now() - this._lastDataTs) / 1000));
+            const stale = age > this._config.stale_after;
+            ageEl.textContent = stale ? `STALE ${this._fmtAge(age)}` : this._fmtAge(age);
+            ageEl.classList.toggle('stale', stale);
+          }
+        }
         const dbg = this.shadowRoot.getElementById('debugReadout');
         if (dbg) {
           const on = this._config && this._config.debug;
@@ -801,6 +830,7 @@ class FlightradarRadarCard extends HTMLElement {
           <div class="readout">
             <span>SITE <b id="siteReadout">—</b></span>
             <span>RANGE <b id="rangeReadout">—</b></span>
+            <span id="dataAgeWrap" hidden>DATA <b id="dataAge">—</b></span>
             <span id="clock">--:--:--</span>
             <button class="sound-toggle" id="soundToggle" hidden></button>
           </div>
@@ -1156,6 +1186,12 @@ class FlightradarRadarCard extends HTMLElement {
 
     this._renderContacts();
     this._initialSyncDone = true;
+  }
+
+  _fmtAge(sec) {
+    if (sec < 60) return `${sec}S`;
+    if (sec < 3600) return `${Math.floor(sec / 60)}M`;
+    return `${Math.floor(sec / 3600)}H${Math.floor((sec % 3600) / 60)}M`;
   }
 
   // ---- Unit formatting (FR24 reports altitude in ft, ground speed in kts) ----

@@ -129,6 +129,7 @@ radius_km: 10          # match the radius configured in the FR24 integration
 | `startup_animation` | `true` | Scope warm-up fade on load |
 | `alert_distance_km` | `0` | Pulse blips closer than this (0 = off) |
 | `sound_alerts` | `none` | `none` \| `new_contact` \| `proximity` \| `all` — synthesized pings; the speaker toggle on the scope is hidden when `none` |
+| `stale_after` | `120` | Seconds without a sensor update before the readout shows a red STALE warning (0 = off) |
 | `speed_unit` | `kts` | `kts` \| `kmh` |
 | `altitude_unit` | `ft` | `ft` \| `m` |
 | `debug` | `false` | On-screen viewport/size diagnostics |
@@ -199,6 +200,12 @@ per sensor update, starting when the aircraft enters your tracked area.
 **Blips jump between positions.**
 That's the sensor's update rhythm. Leave `smooth_motion: true` (default) to
 glide blips along their track between updates.
+
+**The scope shows no aircraft for hours / DATA shows STALE.**
+The readout's `DATA` segment shows how old the sensor data is. If it turns
+red (`STALE …`), the integration has stopped updating — the card is fine but
+its feed is frozen. Reload the FlightRadar24 integration (Settings → Devices
+& Services → ⋮ → Reload) and check the HA logs for `flightradar24` errors.
 
 **Sound alerts don't play.**
 Browsers block audio until you've interacted with the page. Set
