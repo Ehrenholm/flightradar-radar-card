@@ -42,6 +42,9 @@ contacts board.
 - Lost contacts coast on dead reckoning (dimmed) for `linger_time` before
   removal, so momentary signal dropouts don't blink blips away
 - Themes: `green`, `amber`, `blue`
+- Optional sound alerts — synthesized sonar pings (no audio files) for new
+  contacts, proximity, and emergencies, with a tap-to-arm speaker toggle on
+  the scope
 - Sizes itself to the dashboard column **and** the screen height (wall-tablet
   friendly, works in old Android WebViews); proximity alert, startup
   animation, and more — all configurable
@@ -125,6 +128,7 @@ radius_km: 10          # match the radius configured in the FR24 integration
 | `show_ring_labels` | `true` | Kilometre labels on the range rings |
 | `startup_animation` | `true` | Scope warm-up fade on load |
 | `alert_distance_km` | `0` | Pulse blips closer than this (0 = off) |
+| `sound_alerts` | `none` | `none` \| `new_contact` \| `proximity` \| `all` — synthesized pings; the speaker toggle on the scope is hidden when `none` |
 | `debug` | `false` | On-screen viewport/size diagnostics |
 
 ## Examples
@@ -194,6 +198,13 @@ per sensor update, starting when the aircraft enters your tracked area.
 That's the sensor's update rhythm. Leave `smooth_motion: true` (default) to
 glide blips along their track between updates.
 
+**Sound alerts don't play.**
+Browsers block audio until you've interacted with the page. Set
+`sound_alerts` in the config, then tap the speaker icon on the scope once to
+arm it (the setting is remembered, but each page load needs one tap anywhere
+on the card). On dedicated wall tablets, Fully Kiosk Browser has an
+"Autoplay audio" setting that removes the tap requirement entirely.
+
 ## Support
 
 If you enjoy the card, you can support development on
@@ -213,4 +224,4 @@ codes for the glyph detection, theme ideas, and FAQ additions.
   [OpenStreetMap](https://www.openstreetmap.org/) contributors — map data
 - [JetBrains Mono](https://www.jetbrains.com/lp/mono/) — the scope typeface
 - [fratsloos/fr24_card](https://github.com/fratsloos/fr24_card) — a great
-  table-style FR24 card that inspired
+  table-style FR24 card that inspired parts of this README

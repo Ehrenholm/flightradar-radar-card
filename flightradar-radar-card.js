@@ -1,5 +1,5 @@
 /**
- * flightradar-radar-card v0.8.0
+ * flightradar-radar-card v0.9.0
  *
  * A round "radar scope" Lovelace card for the AlexandrErohin/home-assistant-flightradar24
  * integration. Renders the entity's `flights` attribute as sweep-lit blips on a dark map.
@@ -32,6 +32,9 @@
  *   alert_distance_km: 0     # optional, pulse blips closer than this (0 = off)
  *   linger_time: 45          # optional, seconds a dropped contact coasts on the scope
  *                            # (dimmed, dead-reckoned) before it is removed
+ *   sound_alerts: none       # optional: none | new_contact | proximity | all —
+ *                            # synthesized pings; shows a tap-to-arm speaker toggle
+ *                            # on the scope (hidden when none)
  *   debug: false             # optional, show viewport/size diagnostics in the readout
  *
  * Emergency squawks (7700/7600/7500) always paint red, pulse, and sort first.
@@ -44,7 +47,7 @@ const LEAFLET_JS = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.js
 const LEAFLET_CSS = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.css`;
 const FONT_CSS = 'https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap';
 
-const CARD_VERSION = '0.8.0';
+const CARD_VERSION = '0.9.0';
 
 const DEFAULT_SWEEP_PERIOD_S = 4;
 const DEFAULT_MAP_BRIGHTNESS = 0.55;
@@ -54,6 +57,14 @@ const DEFAULT_TRAIL_LENGTH = 7;
 const DEFAULT_HEIGHT_OFFSET = 150;
 const CONTACTS_POSITIONS = ['right', 'left', 'bottom', 'none'];
 const TRAIL_STYLES = ['line', 'dots'];
+const SOUND_MODES = ['none', 'new_contact', 'proximity', 'all'];
+const SOUND_STORAGE_KEY = 'flightradar-radar-card-sound-armed';
+
+const SPEAKER_ON_SVG = '<svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3z"/>'
+  + '<path d="M16 8a5 5 0 0 1 0 8" stroke="currentColor" stroke-width="2" fill="none"/></svg>';
+const SPEAKER_OFF_SVG = '<svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3z"/>'
+  + '<line x1="16" y1="9" x2="22" y2="15" stroke="currentColor" stroke-width="2"/>'
+  + '<line x1="22" y1="9" x2="16" y2="15" stroke="currentColor" stroke-width="2"/></svg>';
 const EMERGENCY_SQUAWKS = ['7700', '7600', '7500'];
 
 const THEMES = {
@@ -182,6 +193,18 @@ const CARD_CSS = `
     mix-blend-mode: screen;
     will-change: transform;
   }
+  .sound-toggle{
+    position:absolute; right:13%; top:13%; z-index:5;
+    width:30px; height:30px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    border:1px solid rgba(var(--accent-rgb),.35);
+    background:rgba(0,0,0,.55); color:var(--muted); cursor:pointer;
+    padding:0;
+  }
+  .sound-toggle svg{ width:15px; height:15px; fill:currentColor; }
+  .sound-toggle:hover{ box-shadow:0 0 0 1px rgba(var(--accent-rgb),.5); }
+  .sound-toggle.armed{ color:var(--green); border-color:rgba(var(--accent-rgb),.7); }
+  .sound-toggle[hidden]{ display:none; }
   .bezel{ position:absolute; inset:0; pointer-events:none; }
   .bz-ring{ fill:none; stroke:rgba(var(--accent-rgb),.22); }
   .bz-tick{ stroke:rgba(var(--accent-rgb),.4); }
@@ -322,6 +345,7 @@ const EDITOR_SCHEMA = [
   { name: 'startup_animation', selector: { boolean: {} } },
   { name: 'alert_distance_km', selector: { number: { min: 0, max: 200, step: 1, mode: 'box' } } },
   { name: 'linger_time', selector: { number: { min: 0, max: 300, step: 5, mode: 'box' } } },
+  { name: 'sound_alerts', selector: { select: { mode: 'dropdown', options: SOUND_MODES.map((v) => ({ value: v, label: v })) } } },
   { name: 'debug', selector: { boolean: {} } },
   { name: 'map_brightness', selector: { number: { min: 0.1, max: 1.5, step: 0.05, mode: 'slider' } } },
   { name: 'sweep_period', selector: { number: { min: 1, max: 20, step: 0.5, mode: 'slider' } } },
@@ -347,6 +371,7 @@ const EDITOR_LABELS = {
   startup_animation: 'Play startup animation',
   alert_distance_km: 'Proximity alert distance (km, 0 = off)',
   linger_time: 'Keep lost contacts for (seconds, 0 = remove instantly)',
+  sound_alerts: 'Sound alerts (synthesized pings)',
   debug: 'Show size diagnostics (troubleshooting)',
   map_brightness: 'Map brightness',
   sweep_period: 'Sweep period (seconds)',
@@ -377,6 +402,7 @@ const EDITOR_DEFAULTS = {
   show_photo: true,
   alert_distance_km: 0,
   linger_time: 45,
+  sound_alerts: 'none',
 };
 
 class FlightradarRadarCardEditor extends HTMLElement {
@@ -436,6 +462,13 @@ class FlightradarRadarCard extends HTMLElement {
     this._lastSweepAngle = 0;
     this._sweepMs = DEFAULT_SWEEP_PERIOD_S * 1000;
     this._anonSeq = 1;
+    this._audioCtx = null;
+    this._initialSyncDone = false;
+    try {
+      this._soundArmed = localStorage.getItem(SOUND_STORAGE_KEY) === '1';
+    } catch (e) {
+      this._soundArmed = false;
+    }
     this._sweepEl = null;
     this._reduceMotion = typeof matchMedia === 'function'
       && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -478,6 +511,9 @@ class FlightradarRadarCard extends HTMLElement {
     if (config.trail_style != null && !TRAIL_STYLES.includes(config.trail_style)) {
       throw new Error(`flightradar-radar-card: "trail_style" must be one of ${TRAIL_STYLES.join(', ')}`);
     }
+    if (config.sound_alerts != null && !SOUND_MODES.includes(config.sound_alerts)) {
+      throw new Error(`flightradar-radar-card: "sound_alerts" must be one of ${SOUND_MODES.join(', ')}`);
+    }
     this._config = {
       ...config,
       radius_km: config.radius_km != null ? Number(config.radius_km) : DEFAULT_RADIUS_KM,
@@ -497,6 +533,7 @@ class FlightradarRadarCard extends HTMLElement {
       show_photo: config.show_photo !== false,
       alert_distance_km: Number(config.alert_distance_km) > 0 ? Number(config.alert_distance_km) : 0,
       linger_time: Number(config.linger_time) >= 0 ? Number(config.linger_time) : 45,
+      sound_alerts: config.sound_alerts || 'none',
       debug: config.debug === true,
     };
     this._sweepMs = this._config.sweep_period * 1000;
@@ -538,6 +575,80 @@ class FlightradarRadarCard extends HTMLElement {
     if (this.shadowRoot && this.shadowRoot.getElementById('bezel')) {
       this._buildBezel();
     }
+    this._updateSoundToggle();
+  }
+
+  // ---- Sound alerts (Web Audio synthesized pings, no audio files) ----
+
+  _ensureAudio() {
+    if (!this._audioCtx) {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return null;
+      this._audioCtx = new Ctx();
+    }
+    return this._audioCtx;
+  }
+
+  _playTone(freqStart, freqEnd, dur, delay = 0, vol = 0.2, type = 'sine') {
+    const ctx = this._audioCtx;
+    if (!ctx || ctx.state !== 'running') return;
+    const t0 = ctx.currentTime + delay;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freqStart, t0);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(freqEnd, 1), t0 + dur);
+    gain.gain.setValueAtTime(vol, t0);
+    gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.05);
+  }
+
+  _playPing(kind) {
+    if (!this._soundArmed || !this._config) return;
+    const mode = this._config.sound_alerts;
+    if (mode === 'none') return;
+    if (kind === 'contact' && mode !== 'new_contact' && mode !== 'all') return;
+    if (kind === 'proximity' && mode !== 'proximity' && mode !== 'all') return;
+    // emergency plays in every non-'none' mode
+    const ctx = this._ensureAudio();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') ctx.resume();
+    if (kind === 'contact') {
+      this._playTone(1150, 580, 0.5);
+    } else if (kind === 'proximity') {
+      this._playTone(1400, 900, 0.18);
+      this._playTone(1400, 900, 0.18, 0.24);
+    } else if (kind === 'emergency') {
+      this._playTone(950, 940, 0.16, 0, 0.22, 'triangle');
+      this._playTone(640, 630, 0.16, 0.2, 0.22, 'triangle');
+      this._playTone(950, 940, 0.16, 0.4, 0.22, 'triangle');
+      this._playTone(640, 630, 0.16, 0.6, 0.22, 'triangle');
+    }
+  }
+
+  _setSoundArmed(armed) {
+    this._soundArmed = armed;
+    try { localStorage.setItem(SOUND_STORAGE_KEY, armed ? '1' : '0'); } catch (e) { /* private mode */ }
+    this._updateSoundToggle();
+    if (armed) {
+      const ctx = this._ensureAudio();
+      if (ctx && ctx.state === 'suspended') ctx.resume();
+      // confirmation ping doubles as an "audio actually works" check
+      this._playTone(900, 550, 0.3);
+    }
+  }
+
+  _updateSoundToggle() {
+    const btn = this.shadowRoot && this.shadowRoot.getElementById('soundToggle');
+    if (!btn) return;
+    const enabled = this._config && this._config.sound_alerts !== 'none';
+    btn.hidden = !enabled;
+    if (!enabled) return;
+    btn.classList.toggle('armed', this._soundArmed);
+    btn.innerHTML = this._soundArmed ? SPEAKER_ON_SVG : SPEAKER_OFF_SVG;
+    btn.title = this._soundArmed ? 'Sound alerts on — click to mute' : 'Sound alerts muted — click to enable';
   }
 
   // Pixel-based height cap: 100dvh is unsupported in older Android WebViews
@@ -590,6 +701,17 @@ class FlightradarRadarCard extends HTMLElement {
       window.addEventListener('resize', this._onWindowResize);
     }
     this._updateFitHeight();
+    if (!this._onPointerDown) {
+      // browsers keep audio suspended until a user gesture: if sound was armed
+      // on a previous visit, any tap on the card re-enables it
+      this._onPointerDown = () => {
+        if (this._soundArmed && this._config && this._config.sound_alerts !== 'none') {
+          const ctx = this._ensureAudio();
+          if (ctx && ctx.state === 'suspended') ctx.resume();
+        }
+      };
+      this.shadowRoot.addEventListener('pointerdown', this._onPointerDown);
+    }
     loadLeaflet().then(() => this._tryInitMap()).catch((err) => this._showWarning(err.message));
 
     if (!this._clockTimer) {
@@ -624,6 +746,10 @@ class FlightradarRadarCard extends HTMLElement {
     if (this._onWindowResize) {
       window.removeEventListener('resize', this._onWindowResize);
       this._onWindowResize = null;
+    }
+    if (this._onPointerDown) {
+      this.shadowRoot.removeEventListener('pointerdown', this._onPointerDown);
+      this._onPointerDown = null;
     }
   }
 
@@ -661,6 +787,7 @@ class FlightradarRadarCard extends HTMLElement {
             <svg class="bezel" id="bezel" viewBox="0 0 100 100"></svg>
             <div class="scanlines"></div>
             <div class="vignette"></div>
+            <button class="sound-toggle" id="soundToggle" hidden></button>
           </div>
         </div>
         <div class="panel">
@@ -674,6 +801,13 @@ class FlightradarRadarCard extends HTMLElement {
       </div>
     `;
     root.appendChild(card);
+
+    const soundBtn = root.getElementById('soundToggle');
+    soundBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this._setSoundArmed(!this._soundArmed);
+    });
+    this._updateSoundToggle();
 
     if (!this._config || this._config.startup_animation) {
       card.classList.add('boot');
@@ -914,6 +1048,8 @@ class FlightradarRadarCard extends HTMLElement {
           this._renderContacts();
         });
         this._aircraft.set(id, ac);
+        // no ping for the initial batch when the card loads
+        if (this._initialSyncDone) this._playPing('contact');
       }
 
       const prevAlt = ac.alt;
@@ -932,7 +1068,9 @@ class FlightradarRadarCard extends HTMLElement {
       ac.origin = f.airport_origin_code_iata || '';
       ac.dest = f.airport_destination_code_iata || '';
       ac.squawk = String(f.squawk || '');
+      const wasEmergency = ac.emergency;
       ac.emergency = EMERGENCY_SQUAWKS.includes(ac.squawk);
+      if (ac.emergency && !wasEmergency && this._initialSyncDone) this._playPing('emergency');
       ac.photo = f.aircraft_photo_small || f.aircraft_photo_medium || '';
       if (prevAlt != null) {
         const climb = ac.alt - prevAlt;
@@ -992,6 +1130,7 @@ class FlightradarRadarCard extends HTMLElement {
     }
 
     this._renderContacts();
+    this._initialSyncDone = true;
   }
 
   // ---- Contact list ----
@@ -1131,8 +1270,12 @@ class FlightradarRadarCard extends HTMLElement {
           : this._colors.accent;
         el.style.setProperty('--blip-color', color);
         el.classList.toggle('selected', isSelected);
-        el.classList.toggle('alert',
-          !ac.lostAt && (ac.emergency || (alertKm > 0 && Math.hypot(ac.x, ac.y) < alertKm)));
+        const inAlertRange = alertKm > 0 && Math.hypot(ac.x, ac.y) < alertKm;
+        el.classList.toggle('alert', !ac.lostAt && (ac.emergency || inAlertRange));
+        if (inAlertRange && !ac.wasInAlert && !ac.lostAt && this._initialSyncDone) {
+          this._playPing('proximity');
+        }
+        ac.wasInAlert = inAlertRange;
         const shape = el.querySelector('.blip-shape');
         const label = el.querySelector('.blip-label');
         const bright = (fullBright ? 1 : brightness) * lostDim;
