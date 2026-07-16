@@ -1,5 +1,5 @@
 /**
- * flightradar-radar-card v1.1.0
+ * flightradar-radar-card v1.1.1
  *
  * A round "radar scope" Lovelace card for the AlexandrErohin/home-assistant-flightradar24
  * integration. Renders the entity's `flights` attribute as sweep-lit blips on a dark map.
@@ -51,7 +51,7 @@ const LEAFLET_JS = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.js
 const LEAFLET_CSS = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.css`;
 const FONT_CSS = 'https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap';
 
-const CARD_VERSION = '1.1.0';
+const CARD_VERSION = '1.1.1';
 
 const DEFAULT_SWEEP_PERIOD_S = 4;
 const DEFAULT_MAP_BRIGHTNESS = 0.55;
@@ -80,9 +80,12 @@ const THEMES = {
 };
 
 // The FR24 integration reports missing values as the literal string 'N/A',
-// and privacy-blocked identities as 'BLOCKED' — treat both as empty.
+// and privacy-blocked identities as 'BLOCKED' (case varies: 'Blocked' has
+// been seen in the wild) — treat all of them as empty.
 function field(v) {
-  return v && v !== 'N/A' && v !== 'BLOCKED' ? String(v) : '';
+  if (v == null || v === '') return '';
+  const s = String(v);
+  return /^(n\/a|blocked)$/i.test(s) ? '' : s;
 }
 
 const HELI_CODE_RE = /^(EC\d|H1\d\d|B06|B407|B412|B429|B505|R22|R44|R66|S61|S64|S76|S92|UH1|A109|A119|A129|A139|A149|A169|A189|AS3\d|AS5\d|MI\d|KA\d)/;
@@ -1066,7 +1069,10 @@ class FlightradarRadarCard extends HTMLElement {
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
       const reg = field(f.aircraft_registration);
       let id = field(f.aircraft_icao_24bit) || field(f.callsign) || reg || field(f.flight_number);
-      if (!id) {
+      // seen.has(id): two aircraft reporting the same identity in one update
+      // must never merge into one track (their interleaved positions would
+      // draw a zigzag trail) — give the second one an anonymous track instead
+      if (!id || seen.has(id)) {
         // no usable identity: adopt the nearest existing anonymous track so the
         // blip and its trail persist across updates instead of respawning
         let best = null;
