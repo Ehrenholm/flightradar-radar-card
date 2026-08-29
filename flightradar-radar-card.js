@@ -1,5 +1,5 @@
 /**
- * flightradar-radar-card v1.1.1
+ * flightradar-radar-card v1.2.0
  *
  * A round "radar scope" Lovelace card for the AlexandrErohin/home-assistant-flightradar24
  * integration. Renders the entity's `flights` attribute as sweep-lit blips on a dark map.
@@ -36,9 +36,14 @@
  *                            # synthesized pings; shows a tap-to-arm speaker toggle
  *                            # on the scope (hidden when none)
  *   stale_after: 120         # optional, show a red STALE warning in the readout when
- *                            # the sensor hasn't updated for this many seconds (0 = off)
+ *                            # the sensor stops updating for this many seconds while
+ *                            # aircraft are present (0 = off; an empty sky is never STALE)
  *   speed_unit: kts          # optional: kts | kmh
  *   altitude_unit: ft        # optional: ft | m
+ *   tile_url: '...'          # optional, override the basemap tile template. Defaults to
+ *                            # Esri's dark-gray canvas (no API key). Use e.g. a CARTO
+ *                            # template with your own ?api_key=... if you prefer those.
+ *   tile_attribution: '...'  # optional, attribution text shown for a custom tile_url
  *   debug: false             # optional, show viewport/size diagnostics in the readout
  *
  * Emergency squawks (7700/7600/7500) always paint red, pulse, and sort first.
@@ -51,7 +56,19 @@ const LEAFLET_JS = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.js
 const LEAFLET_CSS = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.css`;
 const FONT_CSS = 'https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap';
 
-const CARD_VERSION = '1.1.1';
+// Dark basemap. CARTO's keyless basemaps.cartocdn.com tiles are deprecated and
+// now come back stamped with an "API key required" watermark, so the default is
+// Esri's dark-gray canvas, which serves without a key. The heavy #map CSS filter
+// recolours whatever tiles arrive to the theme tint, so the source only needs to
+// be dark-ish. Override via the tile_url / tile_attribution config options (e.g.
+// a CARTO template carrying your own api_key). Note Esri uses {z}/{y}/{x} order
+// and publishes to zoom 16 (Leaflet upscales past that at very small radii).
+const DEFAULT_TILE_URL =
+  'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}';
+const DEFAULT_TILE_ATTRIBUTION = 'Tiles &copy; Esri';
+const DEFAULT_TILE_MAX_NATIVE_ZOOM = 16;
+
+const CARD_VERSION = '1.2.0';
 
 const DEFAULT_SWEEP_PERIOD_S = 4;
 const DEFAULT_MAP_BRIGHTNESS = 0.55;
@@ -491,6 +508,8 @@ class FlightradarRadarCard extends HTMLElement {
     this._clockTimer = null;
     this._resizeObserver = null;
     this._lastStateObj = null;
+    this._lastDataTs = null;
+    this._lastFlightCount = 0;
     this._lastSweepAngle = 0;
     this._sweepMs = DEFAULT_SWEEP_PERIOD_S * 1000;
     this._anonSeq = 1;
@@ -575,6 +594,10 @@ class FlightradarRadarCard extends HTMLElement {
       stale_after: Number(config.stale_after) >= 0 ? Number(config.stale_after) : 120,
       speed_unit: config.speed_unit || 'kts',
       altitude_unit: config.altitude_unit || 'ft',
+      tile_url: config.tile_url || DEFAULT_TILE_URL,
+      tile_attribution: config.tile_attribution != null ? config.tile_attribution
+        : (config.tile_url ? '' : DEFAULT_TILE_ATTRIBUTION),
+      tile_subdomains: config.tile_subdomains || 'abc',
       debug: config.debug === true,
     };
     this._sweepMs = this._config.sweep_period * 1000;
@@ -718,11 +741,16 @@ class FlightradarRadarCard extends HTMLElement {
     this._clearWarning();
     if (stateObj === this._lastStateObj) return; // unchanged entity, skip re-render
     this._lastStateObj = stateObj;
-    // the integration stamps last_updated on every poll — if it stops moving,
-    // the feed is stale (frozen integration, API trouble) and we warn on screen
+    // Freshness marker: FR24 v2.1.1 dropped its custom `last_updated` attribute
+    // and now only writes state when the data actually changes (older versions
+    // still ship the attribute, so we prefer it when present, then fall back to
+    // HA's own state timestamp). Because the integration no longer writes on an
+    // unchanged poll, this stamp freezes whenever nothing moves — see the STALE
+    // guard in the readout ticker, which only warns while aircraft are present.
     this._lastDataTs = Date.parse(stateObj.attributes.last_updated || stateObj.last_updated || '') || null;
 
     const flights = Array.isArray(stateObj.attributes.flights) ? stateObj.attributes.flights : [];
+    this._lastFlightCount = flights.length;
     if (this._map) {
       this._reconcileFlights(flights);
     } else {
@@ -772,7 +800,10 @@ class FlightradarRadarCard extends HTMLElement {
           wrap.hidden = !enabled;
           if (enabled && this._lastDataTs) {
             const age = Math.max(0, Math.round((Date.now() - this._lastDataTs) / 1000));
-            const stale = age > this._config.stale_after;
+            // An empty sky produces no state writes on the FR24 integration, so a
+            // growing age there is normal, not a frozen feed — only flag STALE
+            // while aircraft are actually being reported.
+            const stale = age > this._config.stale_after && this._lastFlightCount > 0;
             ageEl.textContent = stale ? `STALE ${this._fmtAge(age)}` : this._fmtAge(age);
             ageEl.classList.toggle('stale', stale);
           }
@@ -979,12 +1010,23 @@ class FlightradarRadarCard extends HTMLElement {
       zoomSnap: 0,
     });
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-      subdomains: 'abcd', maxZoom: 19,
+    const tileUrl = this._config.tile_url;
+    const usingDefaultTiles = tileUrl === DEFAULT_TILE_URL;
+    const tileOpts = {
+      maxZoom: 19,
+      // Esri's dark-gray canvas only publishes to zoom 16; cap native requests
+      // there so Leaflet upscales instead of fetching 404s at tiny radii. A
+      // custom provider is assumed to cover the full range.
+      maxNativeZoom: usingDefaultTiles ? DEFAULT_TILE_MAX_NATIVE_ZOOM : 19,
       // card version in the attribution so the running version is visible on
       // devices without a dev console (wall tablets)
-      attribution: `&copy; OpenStreetMap &copy; CARTO &middot; card v${CARD_VERSION}`,
-    }).addTo(this._map);
+      attribution: this._config.tile_attribution
+        ? `${this._config.tile_attribution} &middot; card v${CARD_VERSION}`
+        : `card v${CARD_VERSION}`,
+    };
+    // Only pass subdomains when the template actually uses {s}; Esri's does not.
+    if (tileUrl.includes('{s}')) tileOpts.subdomains = this._config.tile_subdomains;
+    L.tileLayer(tileUrl, tileOpts).addTo(this._map);
 
     const homeLatLng = L.latLng(center.lat, center.lon);
     // Set the view before adding vector layers: Leaflet defers layer attachment

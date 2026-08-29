@@ -29,7 +29,7 @@ contacts board.
 - Round CRT-style scope: rotating sweep beam, phosphor blip decay (pings fire
   exactly when the beam passes), scanlines, vignette, bezel with compass and
   labelled range rings
-- Dark Leaflet basemap (CARTO tiles), tinted to match the theme
+- Dark Leaflet basemap (Esri dark-gray tiles, no API key), tinted to match the theme
 - Live aircraft blips with heading, callsign, and trails (line or
   phosphor-dot style); smooth dead-reckoned motion between sensor updates
 - Contacts board: altitude/speed/range plus airline, model, registration and
@@ -129,9 +129,11 @@ radius_km: 10          # match the radius configured in the FR24 integration
 | `startup_animation` | `true` | Scope warm-up fade on load |
 | `alert_distance_km` | `0` | Pulse blips closer than this (0 = off) |
 | `sound_alerts` | `none` | `none` \| `new_contact` \| `proximity` \| `all` — synthesized pings; the speaker toggle on the scope is hidden when `none` |
-| `stale_after` | `120` | Seconds without a sensor update before the readout shows a red STALE warning (0 = off) |
+| `stale_after` | `120` | Seconds without a sensor update, **while aircraft are present**, before the readout shows a red STALE warning (0 = off). An empty sky never counts as stale — the FR24 integration stops writing state when nothing changes |
 | `speed_unit` | `kts` | `kts` \| `kmh` |
 | `altitude_unit` | `ft` | `ft` \| `m` |
+| `tile_url` | Esri dark-gray | Basemap tile template. Defaults to Esri's dark-gray canvas (no API key). Override to use another provider — e.g. a CARTO template carrying your own `?api_key=…` |
+| `tile_attribution` | `Tiles © Esri` | Attribution text shown on the map for a custom `tile_url` |
 | `debug` | `false` | On-screen viewport/size diagnostics |
 
 ## Examples
@@ -229,8 +231,8 @@ codes for the glyph detection, theme ideas, and FAQ additions.
 - [AlexandrErohin/home-assistant-flightradar24](https://github.com/AlexandrErohin/home-assistant-flightradar24)
   — the integration providing the flight data
 - [Leaflet](https://leafletjs.com/) — map rendering
-- [CARTO](https://carto.com/) dark basemap tiles ·
-  [OpenStreetMap](https://www.openstreetmap.org/) contributors — map data
+- [Esri](https://www.esri.com/) dark-gray canvas basemap tiles (default; no API
+  key) · [OpenStreetMap](https://www.openstreetmap.org/) contributors — map data
 - [JetBrains Mono](https://www.jetbrains.com/lp/mono/) — the scope typeface
 - [fratsloos/fr24_card](https://github.com/fratsloos/fr24_card) — a great
   table-style FR24 card that inspired parts of this README
