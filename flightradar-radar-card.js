@@ -52,7 +52,7 @@
  */
 
 const LEAFLET_VERSION = '1.9.4';
-const LEAFLET_JS = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.js`;
+const LEAFLET_ESM = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet-src.esm.js`;
 const LEAFLET_CSS = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.css`;
 const FONT_CSS = 'https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap';
 
@@ -112,19 +112,19 @@ function isHelicopter(f) {
     || HELI_MODEL_RE.test(String(f.aircraft_model || ''));
 }
 
+// Leaflet is loaded as a private ES module and kept in LEAF, never in window.L.
+// Home Assistant's own map cards use the global L (with the markercluster plugin
+// attached), so sharing it breaks whichever map loads second: HA's map throws
+// "markerClusterGroup is not a function" and this card fails in Bounds. The ESM
+// build does not assign window.L, so the two never meet.
+let LEAF = null;
 let leafletPromise = null;
 function loadLeaflet() {
-  if (window.L) return Promise.resolve(window.L);
+  if (LEAF) return Promise.resolve(LEAF);
   if (!leafletPromise) {
-    leafletPromise = new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = LEAFLET_JS;
-      script.onload = () => resolve(window.L);
-      script.onerror = () => {
-        leafletPromise = null;
-        reject(new Error('flightradar-radar-card: failed to load Leaflet from CDN'));
-      };
-      document.head.appendChild(script);
+    leafletPromise = import(LEAFLET_ESM).then((m) => { LEAF = m; return m; }).catch(() => {
+      leafletPromise = null;
+      throw new Error('flightradar-radar-card: failed to load Leaflet from CDN');
     });
   }
   return leafletPromise;
@@ -987,11 +987,11 @@ class FlightradarRadarCard extends HTMLElement {
   }
 
   _tryInitMap() {
-    if (this._map || !this._connected || !window.L || !this._leafletCssReady || !this._config) return;
+    if (this._map || !this._connected || !LEAF || !this._leafletCssReady || !this._config) return;
     const center = this._resolveCenter();
     if (!center) return; // waiting for hass
 
-    const L = window.L;
+    const L = LEAF;
     this._center = center;
     const radiusKm = this._config.radius_km;
 
@@ -1079,7 +1079,7 @@ class FlightradarRadarCard extends HTMLElement {
   }
 
   _makeIcon() {
-    return window.L.divIcon({
+    return LEAF.divIcon({
       className: 'blip-icon',
       html: '<div class="blip-shape"></div><div class="blip-label"></div>'
         + '<div class="blip-tag"><div class="t1"></div><div class="t2"></div></div>',
@@ -1092,7 +1092,7 @@ class FlightradarRadarCard extends HTMLElement {
     const n = ac.trail.length;
     // skip the last point — that's the aircraft's current position
     ac.dots = ac.trail.slice(0, -1).map(([la, lo], i) =>
-      window.L.circleMarker([la, lo], {
+      LEAF.circleMarker([la, lo], {
         radius: 1.6, stroke: false, fillColor: this._colors.accent,
         fillOpacity: 0.06 + 0.3 * ((i + 1) / n),
         interactive: false,
@@ -1102,7 +1102,7 @@ class FlightradarRadarCard extends HTMLElement {
   // ---- Flight reconciliation (add / update / remove by aircraft_icao_24bit) ----
 
   _reconcileFlights(flights) {
-    const L = window.L;
+    const L = LEAF;
     const seen = new Set();
 
     for (const f of flights) {
